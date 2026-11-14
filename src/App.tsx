@@ -7,9 +7,13 @@ import { AuthScreen } from "@/app/auth-screen"
 import { PublicView } from "@/app/public-view"
 import { Workspace } from "@/app/workspace"
 import { Logo } from "@/app/bits"
+import { PrivacyPage, TermsPage } from "@/app/legal"
 
 export default function App() {
-  const share = window.location.pathname.match(/^\/s\/([A-Za-z0-9_-]{8,64})\/?$/)
+  const path = window.location.pathname.replace(/\/$/, "")
+  const share = path.match(/^\/s\/([A-Za-z0-9_-]{8,64})$/)
+  if (path === "/privacy") return <PrivacyPage />
+  if (path === "/terms") return <TermsPage />
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delay={400}>

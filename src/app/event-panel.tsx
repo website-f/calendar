@@ -15,9 +15,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
-import { useActivity, useConfig, useEventEntries, useEventMutations } from "@/lib/data"
+import { useActivity, useEventEntries, useEventMutations } from "@/lib/data"
 import { dayKey, daysOf, fromInputs, inputDates, rangeLabel, relTime } from "@/lib/dates"
-import { googleConfigured, pushToGoogleCalendar } from "@/lib/google"
+import { googleCalendarEventUrl } from "@/lib/google"
 import { PRIORITY_LABEL, STATUS_LABEL, type Ev, type Project, type Status, type User } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { Avatar, FieldRow, NativeSelect, Panel, Segmented, Swatches } from "./bits"
@@ -588,28 +588,15 @@ function ActivityList({ eventId }: { eventId: string }) {
 }
 
 function GooglePushButton({ event }: { event: Ev }) {
-  const cfg = useConfig().data?.google
-  const [busy, setBusy] = useState(false)
-  if (!googleConfigured(cfg)) return null
+  // A prefilled Google Calendar link: no Google permission, works in every browser.
   return (
     <Button
       variant="ghost"
       size="icon"
       aria-label="Add to Google Calendar"
       title="Add to Google Calendar"
-      disabled={busy}
       className="text-muted-foreground"
-      onClick={async () => {
-        setBusy(true)
-        try {
-          const r = await pushToGoogleCalendar(cfg!, [event])
-          toast.success(r.created ? "Added to your Google Calendar" : "Updated in your Google Calendar")
-        } catch (err) {
-          toast.error((err as Error).message)
-        } finally {
-          setBusy(false)
-        }
-      }}
+      render={<a href={googleCalendarEventUrl(event, window.location.origin)} target="_blank" rel="noreferrer" />}
     >
       <CalendarPlusIcon />
     </Button>

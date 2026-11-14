@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { format, startOfDay } from "date-fns"
-import { CalendarDaysIcon, ChartGanttIcon, EyeIcon, Link2OffIcon, MapPinIcon, MoonIcon, SunIcon, CalendarRangeIcon } from "lucide-react"
+import { CalendarDaysIcon, CalendarPlusIcon, ChartGanttIcon, EyeIcon, Link2OffIcon, MapPinIcon, MoonIcon, SunIcon, CalendarRangeIcon } from "lucide-react"
+import { googleCalendarSubscribeUrl } from "@/lib/google"
 import type { CalendarView } from "@/components/reui/event-calendar/event-calendar-types"
 import type { GanttScale } from "@/components/reui/gantt/gantt-types"
 import { Button } from "@/components/ui/button"
@@ -94,6 +95,19 @@ export function PublicView({ token }: { token: string }) {
               { value: "gantt", label: "Gantt", icon: <ChartGanttIcon className="size-3.5" /> },
             ]}
           />
+          <Button
+            variant="outline"
+            title="Add this schedule to your Google Calendar"
+            render={
+              <a
+                href={googleCalendarSubscribeUrl(`${window.location.origin}/api/public/${encodeURIComponent(token)}/calendar.ics`)}
+                target="_blank"
+                rel="noreferrer"
+              />
+            }
+          >
+            <CalendarPlusIcon /> <span className="hidden sm:inline">Subscribe</span>
+          </Button>
           <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={() => setThemePref(theme === "dark" ? "light" : "dark")}>
             {theme === "dark" ? <SunIcon /> : <MoonIcon />}
           </Button>

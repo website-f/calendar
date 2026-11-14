@@ -26,6 +26,8 @@ const SIGNUP_CODE = process.env.SIGNUP_CODE ?? ""
 // Required to create the very first (admin) account on a public server.
 const SETUP_CODE = process.env.SETUP_CODE ?? ""
 const DIST = process.env.DIST_DIR ?? "./dist"
+// The site's public address, used in calendar feeds (behind the proxy the request URL is http://127.0.0.1).
+const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN ?? "").replace(/\/$/, "")
 
 type Row = Record<string, unknown>
 const all = (sql: string, ...p: (string | number | null)[]) =>
@@ -357,13 +359,12 @@ app.get("/api/auth/me", (c) => {
 
 // ----- public share view (no auth) -----
 
-app.get("/api/public/:token", (c) => {
-  const share = one(`SELECT * FROM shares WHERE token=?`, c.req.param("token"))
-  if (!share || share.revoked) return c.json({ error: "This link is no longer active." }, 404)
+/** Resolve a share token to the events it exposes, or an error for dead links. */
+function loadShare(token: string) {
+  const share = one(`SELECT * FROM shares WHERE token=?`, token)
+  if (!share || share.revoked) return { error: "This link is no longer active.", status: 404 as const }
   if (share.expires_at && new Date(String(share.expires_at)).getTime() < Date.now())
-    return c.json({ error: "This link has expired." }, 410)
-  run(`UPDATE shares SET views=views+1 WHERE id=?`, String(share.id))
-
+    return { error: "This link has expired.", status: 410 as const }
   let events = listEvents()
   let projects = listProjects().filter((p) => !p.archived)
   if (share.scope === "project") {
@@ -373,6 +374,75 @@ app.get("/api/public/:token", (c) => {
     events = events.filter((e) => e.id === share.target_id)
     projects = projects.filter((p) => events.some((e) => e.projectId === p.id))
   }
+  return { share, events, projects }
+}
+
+// iCalendar feed for a share link: Google Calendar / Outlook / Apple Calendar subscribe to this URL.
+app.get("/api/public/:token/calendar.ics", (c) => {
+  const r = loadShare(c.req.param("token"))
+  if ("error" in r) return c.text(r.error ?? "", r.status)
+  const includeNotes = Boolean(r.share.include_notes)
+  const origin = PUBLIC_ORIGIN || new URL(c.req.url).origin
+  const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;")
+  const stamp = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")
+  const fold = (line: string) => {
+    // RFC 5545: lines longer than 75 octets continue on the next line after a space.
+    const out: string[] = []
+    let cur = ""
+    for (const ch of line) {
+      if (Buffer.byteLength(cur + ch) > 73) {
+        out.push(cur)
+        cur = " " + ch
+      } else cur += ch
+    }
+    out.push(cur)
+    return out.join("\r\n")
+  }
+  const projectName = new Map(r.projects.map((p) => [p.id, p.name]))
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Orion Calendar//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH",
+    `X-WR-CALNAME:${esc(String(r.share.title || "Orion Calendar"))}`,
+    "X-PUBLISHED-TTL:PT1H",
+    "REFRESH-INTERVAL;VALUE=DURATION:PT1H",
+  ]
+  for (const e of r.events) {
+    const desc = [
+      e.projectId && projectName.get(e.projectId) ? `Project: ${projectName.get(e.projectId)}` : "",
+      includeNotes ? e.notes : "",
+      `${origin}/s/${c.req.param("token")}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+    lines.push(
+      "BEGIN:VEVENT",
+      `UID:${e.id}@${new URL(origin).host}`,
+      `DTSTAMP:${stamp(e.updatedAt)}`,
+      `LAST-MODIFIED:${stamp(e.updatedAt)}`,
+      e.allDay ? `DTSTART;VALUE=DATE:${e.start.slice(0, 10).replace(/-/g, "")}` : `DTSTART:${stamp(e.start)}`,
+      e.allDay ? `DTEND;VALUE=DATE:${e.end.slice(0, 10).replace(/-/g, "")}` : `DTEND:${stamp(e.end)}`,
+      `SUMMARY:${esc(e.title)}`,
+      ...(includeNotes && e.location ? [`LOCATION:${esc(e.location)}`] : []),
+      `DESCRIPTION:${esc(desc)}`,
+      "STATUS:CONFIRMED",
+      "END:VEVENT"
+    )
+  }
+  lines.push("END:VCALENDAR")
+  c.header("Content-Type", "text/calendar; charset=utf-8")
+  c.header("Cache-Control", "public, max-age=300")
+  return c.body(lines.map(fold).join("\r\n") + "\r\n")
+})
+
+app.get("/api/public/:token", (c) => {
+  const r = loadShare(c.req.param("token"))
+  if ("error" in r) return c.json({ error: r.error }, r.status)
+  const { share, projects } = r
+  const events = r.events
+  run(`UPDATE shares SET views=views+1 WHERE id=?`, String(share.id))
   const includeNotes = Boolean(share.include_notes)
   const includeEntries = Boolean(share.include_entries)
   const ids = new Set(events.map((e) => e.id))
@@ -800,6 +870,34 @@ app.delete("/api/entries/:id", (c) => {
   if (cur) log(String(cur.event_id), user, "removed data", `${cur.kind}: ${cur.title}`)
   bumpVersion()
   return c.json({ ok: true })
+})
+
+// Read a Google Sheet that is shared "Anyone with the link" as CSV, without any Google permission.
+// Only the sheet id/gid from the pasted link are used, so this can only ever reach docs.google.com.
+app.get("/api/sheets/csv", async (c) => {
+  const user = c.get("user")
+  assertEditor(user)
+  const id = c.req.query("id") ?? ""
+  const gid = c.req.query("gid") ?? ""
+  if (!/^[a-zA-Z0-9_-]{20,100}$/.test(id) || (gid && !/^\d{1,12}$/.test(gid)))
+    throw new HttpError(400, "That does not look like a Google Sheet link.")
+  const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv${gid ? `&gid=${gid}` : ""}`
+  let res: Response
+  try {
+    res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15_000) })
+  } catch {
+    throw new HttpError(502, "Could not reach Google Sheets. Try again.")
+  }
+  const type = res.headers.get("content-type") ?? ""
+  if (!res.ok || !type.includes("text/csv")) {
+    throw new HttpError(
+      403,
+      'Google would not share that sheet. In Google Sheets, click Share and set General access to "Anyone with the link", then try again.'
+    )
+  }
+  const text = await res.text()
+  if (text.length > 5_000_000) throw new HttpError(413, "That sheet is too large to import.")
+  return c.json({ csv: text })
 })
 
 // bulk import (Google Sheets / CSV)

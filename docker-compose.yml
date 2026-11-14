@@ -8,6 +8,7 @@ services:
     env_file: .env
     environment:
       COOKIE_SECURE: "true"
+      PUBLIC_ORIGIN: "https://calendar.oriondesk.space"
     ports:
       # Loopback only: the Orxies edge proxy terminates TLS for calendar.oriondesk.space.
       - "127.0.0.1:${CALENDAR_PORT:-8130}:8787"

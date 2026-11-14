@@ -7,11 +7,10 @@ import type { AppConfig, Ev, Project, User, Entry } from "./types"
 import { evStart, lastDay, dayKey, evEnd } from "./dates"
 import { STATUS_LABEL } from "./types"
 
+// Only non-sensitive scopes, so the app can be public without Google's "unverified app" warning.
+// drive.file = files the app creates (Sheets exports) or the person picks in the Drive Picker.
 const SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
-  // Read a sheet by its link. The Drive Picker needs third-party cookies, which Safari and Brave block.
-  "https://www.googleapis.com/auth/spreadsheets.readonly",
-  "https://www.googleapis.com/auth/calendar.events",
   "openid",
   "email",
   "profile",
@@ -344,72 +343,24 @@ export async function readSheet(cfg: Cfg, spreadsheetId: string): Promise<{ titl
   return { title: meta.properties.title, rows: values.values ?? [] }
 }
 
-// ---------- Calendar ----------
+// ---------- Calendar (no Google permission needed) ----------
 
-function toGoogleEvent(e: Ev, appUrl: string) {
-  const base = {
-    summary: e.title,
-    location: e.location || undefined,
-    description: [e.notes, `Open in Calendar: ${appUrl}`].filter(Boolean).join("\n\n"),
-    extendedProperties: { private: { orionCalendarId: e.id } },
-  }
-  if (e.allDay) return { ...base, start: { date: e.start.slice(0, 10) }, end: { date: e.end.slice(0, 10) } }
-  return { ...base, start: { dateTime: e.start }, end: { dateTime: e.end } }
-}
+const gDate = (iso: string, allDay: boolean) =>
+  allDay ? iso.slice(0, 10).replace(/-/g, "") : new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")
 
-/** Create or update each event in the user's primary Google Calendar. */
-export async function pushToGoogleCalendar(cfg: Cfg, events: Ev[], onProgress?: (done: number) => void) {
-  await getToken(cfg)
-  let done = 0
-  let created = 0
-  let updated = 0
-  for (const e of events) {
-    const body = toGoogleEvent(e, window.location.origin)
-    const found = await gfetch<{ items?: { id: string }[] }>(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events?privateExtendedProperty=${encodeURIComponent(
-        `orionCalendarId=${e.id}`
-      )}&maxResults=1`
-    )
-    const existing = found.items?.[0]
-    if (existing) {
-      await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${existing.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      })
-      updated++
-    } else {
-      await gfetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      })
-      created++
-    }
-    onProgress?.(++done)
-  }
-  return { created, updated }
-}
-
-export interface GCalItem {
-  id: string
-  summary?: string
-  description?: string
-  location?: string
-  start: { date?: string; dateTime?: string }
-  end: { date?: string; dateTime?: string }
-  extendedProperties?: { private?: Record<string, string> }
-}
-
-export async function listGoogleCalendar(cfg: Cfg, from: Date, to: Date): Promise<GCalItem[]> {
-  await getToken(cfg)
+/** Google Calendar "create event" link with everything prefilled. Works in any browser, no sign-in to our app. */
+export function googleCalendarEventUrl(e: Ev, details?: string): string {
   const q = new URLSearchParams({
-    timeMin: from.toISOString(),
-    timeMax: to.toISOString(),
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "250",
+    action: "TEMPLATE",
+    text: e.title,
+    dates: `${gDate(e.start, e.allDay)}/${gDate(e.end, e.allDay)}`,
+    details: [e.notes, details].filter(Boolean).join("\n\n").slice(0, 1500),
+    location: e.location,
   })
-  const res = await gfetch<{ items?: GCalItem[] }>(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${q}`
-  )
-  return (res.items ?? []).filter((i) => !i.extendedProperties?.private?.orionCalendarId)
+  return `https://calendar.google.com/calendar/render?${q}`
+}
+
+/** One-click "subscribe" link: Google Calendar keeps the feed in sync by itself. */
+export function googleCalendarSubscribeUrl(icsUrl: string): string {
+  return `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(icsUrl.replace(/^https:/, "webcal:"))}`
 }

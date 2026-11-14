@@ -448,6 +448,7 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
         events={visible}
         projects={projects}
         users={boot.users}
+        shares={boot.shares}
         canEdit={canEdit}
         isAdmin={isAdmin}
       />

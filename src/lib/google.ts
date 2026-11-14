@@ -9,8 +9,9 @@ import { STATUS_LABEL } from "./types"
 
 // Only non-sensitive scopes, so the app can be public without Google's "unverified app" warning.
 // drive.file = files the app creates (Sheets exports) or the person picks in the Drive Picker.
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 const SCOPES = [
-  "https://www.googleapis.com/auth/drive.file",
+  DRIVE_SCOPE,
   "openid",
   "email",
   "profile",
@@ -132,9 +133,17 @@ export async function getToken(cfg: Cfg, opts: { interactive?: boolean } = {}): 
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: cfg.clientId,
       scope: SCOPES,
+      // Never fold in permissions granted to older versions of the app; that would bring back
+      // Google's "unverified app" screen for anyone who connected before.
+      include_granted_scopes: false,
       callback: async (resp: TokenResponse) => {
         if (resp.error || !resp.access_token) {
           reject(new Error(resp.error_description || resp.error || "Google sign-in was cancelled."))
+          return
+        }
+        // Google shows each permission as a checkbox; Drive is unticked until the person ticks it.
+        if (!window.google.accounts.oauth2.hasGrantedAllScopes(resp, DRIVE_SCOPE)) {
+          reject(new Error("Google Drive was not ticked. Connect again and tick the Google Drive box so the app can save and open files."))
           return
         }
         token = { value: resp.access_token, exp: Date.now() + (resp.expires_in ?? 3600) * 1000 }

@@ -11,7 +11,7 @@ Live: https://calendar.oriondesk.space
 - **Daily data**: tap any date to see every event running that day, with that day's notes, tasks, values, links and files. Inside an event, the Daily data tab has a chip for each day in its range.
 - **Team login**: email and password. Roles are admin (manages the team), editor (changes events) and viewer (read only).
 - **Sharing**: public, view-only links for everything, one project or one event. You choose whether to show notes and daily data, can set an expiry, can turn a link off, and see a view count.
-- **Google Workspace** (each person uses their own Google account): export to a new Google Sheet, import events from a Sheet, send events to Google Calendar (sending again updates them in place), bring Google Calendar events in, and attach Drive files to any date.
+- **Google Workspace**: Sheets export (each person uses their own Google account). Sheets import from a pasted link of a sheet shared "Anyone with the link", or from a CSV. Google Calendar: an "Add to Google Calendar" button per event, plus a calendar feed per share link that Google Calendar, Outlook or Apple Calendar can subscribe to. Import Google Calendar events from an exported .ics file. Drive, Docs and Sheets links can be attached to any date.
 - **Mobile first and Safari safe**: inputs are 16px on touch screens so iOS never zooms. Panels open as bottom sheets with safe-area padding. Native date, time and select pickers are used.
 - **Live**: open clients poll a version number and refresh only when someone changes something.
 
@@ -41,11 +41,10 @@ docker compose up -d --build
 - Data lives in the Docker volume `calendar_calendar-data` (a SQLite file). To back it up, stop the app briefly and copy the file out: `docker compose stop app && docker run --rm -v calendar_calendar-data:/d -v $PWD:/b alpine cp /d/calendar.db /b/ && docker compose start app`.
 - Settings are in `/opt/calendar/.env`. See `.env.example`.
 
-## Turning on Google
+## Google setup (live)
 
-1. In Google Cloud Console, create an OAuth client ID of type **Web application**. Add `https://calendar.oriondesk.space` as an authorised JavaScript origin.
-2. Enable the Google Drive API, Google Sheets API, Google Calendar API and Google Picker API.
-3. Create an API key and restrict it to the Picker API and the site.
-4. Put `GOOGLE_CLIENT_ID`, `GOOGLE_API_KEY` and `GOOGLE_APP_ID` (the project number) in `.env`, then run `docker compose up -d`.
-
-The app asks for `drive.file` (only files people pick or the app creates) and `calendar.events`. While the OAuth consent screen is in "Testing" mode, add each teammate as a test user, or publish the app.
+- Google Cloud project `orion-calendar-514710` is **In production** with only non-sensitive scopes: `drive.file`, `openid`, `email` and `profile`. That is why Google shows no "unverified app" screen and no review is needed. Do not add sensitive scopes such as Calendar or reading all Sheets unless you also submit the app for Google verification.
+- The OAuth client's authorised JavaScript origin is `https://calendar.oriondesk.space`. The API key is restricted to the Picker API on that site.
+- Branding: home `/`, privacy `/privacy`, terms `/terms`, authorised domain `oriondesk.space`. Don't upload a logo: that would require verification.
+- Server `.env`: `GOOGLE_CLIENT_ID`, `GOOGLE_API_KEY` and `GOOGLE_APP_ID` (the project number).
+- The Drive Picker needs third-party cookies, so it is only offered in Chrome and Edge. Pasting links works everywhere.

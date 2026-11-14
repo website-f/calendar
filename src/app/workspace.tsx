@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { addDays, format, isSameDay, startOfDay } from "date-fns"
 import { toast } from "sonner"
@@ -58,9 +58,10 @@ import { Avatar, Logo, Panel, FieldRow, Segmented, Swatches } from "./bits"
 import { Board, type BoardMode } from "./board"
 import { DayPanel } from "./day-panel"
 import { EventPanel, type Draft } from "./event-panel"
-import { GooglePanel } from "./google-panel"
-import { SettingsPanel } from "./settings-panel"
-import { SharePanel } from "./share-panel"
+// Rarely-opened panels load on first use, keeping the first page small.
+const GooglePanel = lazy(() => import("./google-panel").then((m) => ({ default: m.GooglePanel })))
+const SettingsPanel = lazy(() => import("./settings-panel").then((m) => ({ default: m.SettingsPanel })))
+const SharePanel = lazy(() => import("./share-panel").then((m) => ({ default: m.SharePanel })))
 
 const NONE = "__none"
 const HOLIDAYS_KEY = "__holidays"
@@ -248,7 +249,7 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
               </Button>
             </div>
           )}
-          <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto px-2 pb-4">{sidebar}</div>
+          <div className="thin-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-2 pb-4">{sidebar}</div>
           <div className="flex items-center gap-1 border-t px-3 py-2.5">
             <UserMenu boot={boot} onSettings={() => setSettingsOpen(true)} onSignOut={onSignOut} />
           </div>
@@ -443,6 +444,8 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
           holidays={holidays}
         />
       )}
+      <Suspense fallback={null}>
+      {share !== undefined && (
       <SharePanel
         open={share !== undefined}
         onOpenChange={(v) => !v && setShare(undefined)}
@@ -451,6 +454,8 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
         events={boot.events}
         preset={share}
       />
+      )}
+      {googleOpen && (
       <GooglePanel
         open={googleOpen}
         onOpenChange={setGoogleOpen}
@@ -462,7 +467,9 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
         canEdit={canEdit}
         isAdmin={isAdmin}
       />
-      <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} boot={boot} />
+      )}
+      {settingsOpen && <SettingsPanel open={settingsOpen} onOpenChange={setSettingsOpen} boot={boot} />}
+      </Suspense>
       <ProjectPanel
         project={projectEdit}
         onClose={() => setProjectEdit(null)}
@@ -665,8 +672,8 @@ function Sidebar({
   const toggle = (id: string) => setHidden(hidden.includes(id) ? hidden.filter((x) => x !== id) : [...hidden, id])
 
   return (
-    <div className="grid gap-5">
-      <div className="rounded-2xl bg-background/60 p-1 ring-1 ring-border/70">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
+      <div className="min-w-0 overflow-hidden rounded-2xl bg-background/60 p-1 ring-1 ring-border/70">
         <MiniCalendar
           mode="single"
           selected={date}
@@ -677,7 +684,7 @@ function Sidebar({
           onDayClick={(d) => isSameDay(d, date) && onOpenDay(d)}
           modifiers={{ busy: (d) => busy.has(dayKey(d)) }}
           modifiersClassNames={{ busy: "[&>button]:after:absolute [&>button]:after:bottom-1 [&>button]:after:left-1/2 [&>button]:after:size-1 [&>button]:after:-translate-x-1/2 [&>button]:after:rounded-full [&>button]:after:bg-primary/70" }}
-          className="w-full bg-transparent p-1 [--cell-size:--spacing(8)] lg:[--cell-size:--spacing(8.5)]"
+          className="w-full max-w-full bg-transparent p-1 [--cell-size:--spacing(8)] lg:[--cell-size:--spacing(8.5)] [&_table]:table-fixed"
         />
         <p className="px-2 pb-1.5 text-[11px] text-muted-foreground">Tap a selected day again to open its data.</p>
       </div>
@@ -691,7 +698,7 @@ function Sidebar({
             </Button>
           )}
         </div>
-        <ul className="grid gap-0.5">
+        <ul className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5">
           {[...active.map((p) => ({ id: p.id, name: p.name, color: p.color, p })), { id: NONE, name: "No project", color: "#6b7280", p: null }]
             .filter((x) => x.p || (counts.get(NONE) ?? 0) > 0)
             .map((x) => {
@@ -741,7 +748,7 @@ function Sidebar({
         {upNext.length === 0 ? (
           <p className="px-2 text-[13px] text-muted-foreground">Nothing coming up.</p>
         ) : (
-          <ul className="grid gap-0.5">
+          <ul className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5">
             {upNext.map((e) => (
               <UpNextItem key={e.id} e={e} projects={boot.projects} onClick={() => onOpenEvent(e.id)} />
             ))}
@@ -805,7 +812,7 @@ function UpNextItem({ e, projects, onClick }: { e: Ev; projects: Project[]; onCl
           <span className="text-[15px] leading-tight font-semibold tabular">{format(s, "d")}</span>
         </span>
         <span className="h-8 w-[3px] shrink-0 rounded-full" style={{ background: color }} />
-        <span className="min-w-0">
+        <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-medium">{e.title}</span>
           <span className="block truncate text-[11px] text-muted-foreground">{rangeLabel(e)}</span>
         </span>

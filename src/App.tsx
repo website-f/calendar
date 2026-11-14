@@ -1,25 +1,32 @@
-import { Component, type ReactNode } from "react"
+import { Component, lazy, Suspense, type ReactNode } from "react"
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { api, ApiError } from "@/lib/api"
 import { queryClient, useBootstrap, useConfig, useMe } from "@/lib/data"
 import { AuthScreen } from "@/app/auth-screen"
-import { PublicView } from "@/app/public-view"
 import { Workspace } from "@/app/workspace"
 import { Logo } from "@/app/bits"
-import { PrivacyPage, TermsPage } from "@/app/legal"
+const PublicView = lazy(() => import("@/app/public-view").then((m) => ({ default: m.PublicView })))
+const PrivacyPage = lazy(() => import("@/app/legal").then((m) => ({ default: m.PrivacyPage })))
+const TermsPage = lazy(() => import("@/app/legal").then((m) => ({ default: m.TermsPage })))
 
 export default function App() {
   const path = window.location.pathname.replace(/\/$/, "")
   const share = path.match(/^\/s\/([A-Za-z0-9_-]{8,64})$/)
-  if (path === "/privacy") return <PrivacyPage />
-  if (path === "/terms") return <TermsPage />
+  if (path === "/privacy" || path === "/terms")
+    return <Suspense fallback={<Splash />}>{path === "/privacy" ? <PrivacyPage /> : <TermsPage />}</Suspense>
   return (
     <CrashGuard>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider delay={400}>
-          {share ? <PublicView token={share[1]!} /> : <Gate />}
+          {share ? (
+            <Suspense fallback={<Splash />}>
+              <PublicView token={share[1]!} />
+            </Suspense>
+          ) : (
+            <Gate />
+          )}
           <Toaster position="top-center" richColors={false} closeButton={false} />
         </TooltipProvider>
       </QueryClientProvider>

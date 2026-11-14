@@ -17,6 +17,21 @@ export const queryClient = new QueryClient({
 
 const BOOT = ["bootstrap"] as const
 
+// The server embeds config + the signed-in person's data in the page (window.__BOOT__), so the
+// first screen renders without three extra round trips over a slow connection.
+declare global {
+  interface Window {
+    __BOOT__?: { config: AppConfig; me: Bootstrap["me"] | null; boot: Bootstrap | null }
+  }
+}
+const preload = typeof window !== "undefined" ? window.__BOOT__ : undefined
+if (preload) {
+  queryClient.setQueryData(["config"], preload.config)
+  queryClient.setQueryData(["me"], { user: preload.me })
+  if (preload.boot) queryClient.setQueryData(BOOT, preload.boot)
+  delete window.__BOOT__
+}
+
 export const useConfig = () =>
   useQuery({ queryKey: ["config"], queryFn: () => api<AppConfig>("/api/config"), staleTime: 60_000 })
 

@@ -1,7 +1,8 @@
-import { readFileSync, existsSync } from "node:fs"
+import { readFileSync, existsSync, statSync } from "node:fs"
+import { resolve, sep } from "node:path"
+import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib"
 import { randomBytes } from "node:crypto"
 import { serve } from "@hono/node-server"
-import { serveStatic } from "@hono/node-server/serve-static"
 import { Hono, type Context } from "hono"
 import { z } from "zod"
 import { db, bumpVersion, getVersion, tx } from "./db.ts"
@@ -287,9 +288,9 @@ app.use("/api/*", async (c, next) => {
 
 app.get("/api/health", (c) => c.json({ ok: true }))
 
-app.get("/api/config", (c) => {
+function configPayload() {
   const userCount = Number(one(`SELECT COUNT(*) AS n FROM users`)?.n ?? 0)
-  return c.json({
+  return {
     setupRequired: userCount === 0,
     setupNeedsCode: userCount === 0 && Boolean(SETUP_CODE),
     signupWithCode: Boolean(SIGNUP_CODE),
@@ -298,8 +299,10 @@ app.get("/api/config", (c) => {
       apiKey: process.env.GOOGLE_API_KEY ?? "",
       appId: process.env.GOOGLE_APP_ID ?? "",
     },
-  })
-})
+  }
+}
+
+app.get("/api/config", (c) => c.json(configPayload()))
 
 // ----- auth -----
 
@@ -494,9 +497,8 @@ app.use("/api/*", requireUser)
 
 app.get("/api/version", (c) => c.json({ version: getVersion() }))
 
-app.get("/api/bootstrap", (c) => {
-  const user = c.get("user")
-  return c.json({
+function bootstrapPayload(user: User) {
+  return {
     me: user,
     version: getVersion(),
     users: listUsers().map((u) => (user.role === "admin" ? u : { ...u, email: u.email })),
@@ -508,8 +510,10 @@ app.get("/api/bootstrap", (c) => {
     dayMarks: all(`SELECT day, COUNT(*) AS n FROM entries WHERE day IS NOT NULL GROUP BY day`).map(
       (r) => ({ day: String(r.day), n: Number(r.n) })
     ),
-  })
-})
+  }
+}
+
+app.get("/api/bootstrap", (c) => c.json(bootstrapPayload(c.get("user"))))
 
 // profile
 app.patch("/api/me", async (c) => {
@@ -1035,21 +1039,91 @@ app.delete("/api/shares/:id", (c) => {
 app.all("/api/*", (c) => c.json({ error: "Not found." }, 404))
 
 // ---------- static SPA ----------
+// Built files are pre-compressed at build time (scripts/compress.mjs). We send the Brotli or gzip
+// copy when the browser accepts it: the link to Malaysia is slow, so bytes matter more than CPU.
+
+const MIME: Record<string, string> = {
+  js: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  html: "text/html; charset=utf-8",
+  svg: "image/svg+xml",
+  json: "application/json",
+  woff2: "font/woff2",
+  png: "image/png",
+  ico: "image/x-icon",
+  txt: "text/plain; charset=utf-8",
+}
+const fileCache = new Map<string, Buffer | null>()
+const readCached = (f: string) => {
+  if (!fileCache.has(f)) fileCache.set(f, existsSync(f) && statSync(f).isFile() ? readFileSync(f) : null)
+  return fileCache.get(f)!
+}
+function pickEncoding(c: Context, file: string): { buf: Buffer; enc?: string } | null {
+  const ae = c.req.header("accept-encoding") ?? ""
+  if (/\bbr\b/.test(ae)) {
+    const b = readCached(file + ".br")
+    if (b) return { buf: b, enc: "br" }
+  }
+  if (/\bgzip\b/.test(ae)) {
+    const g = readCached(file + ".gz")
+    if (g) return { buf: g, enc: "gzip" }
+  }
+  const raw = readCached(file)
+  return raw ? { buf: raw } : null
+}
+function sendFile(c: Context, rel: string, cache: string) {
+  const distRoot = resolve(DIST)
+  const file = resolve(distRoot, "." + rel)
+  if (!file.startsWith(distRoot + sep) || rel.includes("..")) return null
+  const hit = pickEncoding(c, file)
+  if (!hit) return null
+  const ext = file.split(".").pop() ?? ""
+  c.header("Content-Type", MIME[ext] ?? "application/octet-stream")
+  c.header("Cache-Control", cache)
+  c.header("Vary", "Accept-Encoding")
+  if (hit.enc) c.header("Content-Encoding", hit.enc)
+  return c.body(new Uint8Array(hit.buf))
+}
+function compressDynamic(c: Context, text: string) {
+  const ae = c.req.header("accept-encoding") ?? ""
+  c.header("Vary", "Accept-Encoding")
+  if (/\bbr\b/.test(ae)) {
+    c.header("Content-Encoding", "br")
+    return new Uint8Array(brotliCompressSync(text, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } }))
+  }
+  if (/\bgzip\b/.test(ae)) {
+    c.header("Content-Encoding", "gzip")
+    return new Uint8Array(gzipSync(text, { level: 6 }))
+  }
+  return text
+}
+// Embed JSON in a <script> safely (no "</script>" breakouts).
+const inlineJson = (v: unknown) =>
+  JSON.stringify(v)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029")
 
 if (existsSync(DIST)) {
-  app.use(
-    "/assets/*",
-    async (c, next) => {
-      await next()
-      c.header("Cache-Control", "public, max-age=31536000, immutable")
-    },
-    serveStatic({ root: DIST })
-  )
-  app.use("*", serveStatic({ root: DIST }))
   const indexHtml = readFileSync(`${DIST}/index.html`, "utf8")
+  app.get("/assets/*", (c) => sendFile(c, c.req.path, "public, max-age=31536000, immutable") ?? c.notFound())
   app.get("*", (c) => {
-    c.header("Cache-Control", "no-cache")
-    return c.html(indexHtml)
+    const path = c.req.path
+    if (path !== "/" && /\.[a-z0-9]+$/i.test(path)) {
+      return sendFile(c, path, "public, max-age=86400") ?? c.notFound()
+    }
+    // App shell. For signed-in people we embed config + all their data so the first screen
+    // renders without waiting for three more round trips over the slow link.
+    let boot = ""
+    if (!path.startsWith("/s/") && path !== "/privacy" && path !== "/terms") {
+      const user = currentUser(c)
+      const payload = { config: configPayload(), me: user, boot: user ? bootstrapPayload(user) : null }
+      boot = `<script>window.__BOOT__=${inlineJson(payload)}</script>`
+    }
+    const html = indexHtml.replace("</head>", `${boot}</head>`)
+    c.header("Content-Type", "text/html; charset=utf-8")
+    c.header("Cache-Control", "no-store")
+    return c.body(compressDynamic(c, html))
   })
 }
 

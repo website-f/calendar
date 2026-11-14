@@ -23,6 +23,7 @@ import type { GanttScale } from "@/components/reui/gantt/gantt-types"
 import { Button } from "@/components/ui/button"
 import { Calendar as MiniCalendar } from "@/components/ui/calendar"
 import {
+  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -462,7 +463,7 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
         }}
         nextColor={SWATCHES[projects.length % SWATCHES.length]!}
       />
-      <CommandDialog open={cmdOpen} onOpenChange={setCmdOpen} title="Search events">
+      <CommandDialog open={cmdOpen} onOpenChange={setCmdOpen} title="Search events" className="top-[max(0.75rem,env(safe-area-inset-top))] sm:top-1/3">
         <SearchPalette
           events={boot.events}
           projects={projects}
@@ -859,39 +860,61 @@ function SearchPalette({
   onNew?: () => void
 }) {
   const [q, setQ] = useState("")
-  const sorted = useMemo(() => [...events].sort((a, b) => b.start.localeCompare(a.start)), [events])
+  const needle = q.trim().toLowerCase()
+  // Plain "contains" matching on what people actually type; cmdk's fuzzy scoring was too loose.
+  const results = useMemo(() => {
+    const projectName = new Map(projects.map((p) => [p.id, p.name]))
+    const list = needle
+      ? events.filter((e) =>
+          [e.title, e.notes, e.location, e.projectId ? projectName.get(e.projectId) : ""].join(" ").toLowerCase().includes(needle)
+        )
+      : events
+    // Upcoming first (soonest first), then past events (most recent first).
+    const today = dayKey(new Date())
+    return [...list]
+      .sort((a, b) => {
+        const af = a.end.slice(0, 10) >= today
+        const bf = b.end.slice(0, 10) >= today
+        if (af !== bf) return af ? -1 : 1
+        return af ? a.start.localeCompare(b.start) : b.start.localeCompare(a.start)
+      })
+      .slice(0, 100)
+  }, [events, projects, needle])
+
   return (
-    <>
-      <CommandInput placeholder="Search by title, notes or place..." value={q} onValueChange={setQ} />
+    <Command loop shouldFilter={false}>
+      <CommandInput placeholder="Search by title, notes, place or project..." value={q} onValueChange={setQ} />
       <CommandList>
-        <CommandEmpty>No events match.</CommandEmpty>
-        {q.trim() && (
+        <CommandEmpty>No events match "{q.trim()}".</CommandEmpty>
+        {needle && results.length > 0 && (
           <CommandGroup heading="Filter">
-            <CommandItem value={`__filter ${q}`} onSelect={() => onFilter(q.trim())}>
+            <CommandItem value="__filter" onSelect={() => onFilter(q.trim())}>
               <SearchIcon /> Show only events matching "{q.trim()}"
             </CommandItem>
           </CommandGroup>
         )}
-        {onNew && !q && (
+        {onNew && !needle && (
           <CommandGroup heading="Actions">
             <CommandItem value="__new" onSelect={onNew}>
               <PlusIcon /> New event
             </CommandItem>
           </CommandGroup>
         )}
-        <CommandGroup heading="Events">
-          {sorted.slice(0, 200).map((e) => {
-            const p = projects.find((x) => x.id === e.projectId)
-            return (
-              <CommandItem key={e.id} value={`${e.title} ${e.notes} ${e.location} ${e.id}`} onSelect={() => onPick(e.id)}>
-                <span className="size-2 shrink-0 rounded-full" style={{ background: e.color ?? p?.color ?? "#6b7280" }} />
-                <span className="truncate">{e.title}</span>
-                <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{rangeLabel(e)}</span>
-              </CommandItem>
-            )
-          })}
-        </CommandGroup>
+        {results.length > 0 && (
+          <CommandGroup heading={needle ? `${results.length} result${results.length === 1 ? "" : "s"}` : "Events"}>
+            {results.map((e) => {
+              const p = projects.find((x) => x.id === e.projectId)
+              return (
+                <CommandItem key={e.id} value={e.id} onSelect={() => onPick(e.id)}>
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: e.color ?? p?.color ?? "#6b7280" }} />
+                  <span className="min-w-0 flex-1 truncate">{e.title}</span>
+                  <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">{rangeLabel(e)}</span>
+                </CommandItem>
+              )
+            })}
+          </CommandGroup>
+        )}
       </CommandList>
-    </>
+    </Command>
   )
 }

@@ -1,3 +1,4 @@
+import { Component, type ReactNode } from "react"
 import { QueryClientProvider, useQueryClient } from "@tanstack/react-query"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -15,13 +16,45 @@ export default function App() {
   if (path === "/privacy") return <PrivacyPage />
   if (path === "/terms") return <TermsPage />
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider delay={400}>
-        {share ? <PublicView token={share[1]!} /> : <Gate />}
-        <Toaster position="top-center" richColors={false} closeButton={false} />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <CrashGuard>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider delay={400}>
+          {share ? <PublicView token={share[1]!} /> : <Gate />}
+          <Toaster position="top-center" richColors={false} closeButton={false} />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </CrashGuard>
   )
+}
+
+/** A bug in one screen should never leave people staring at a blank page. */
+class CrashGuard extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+  componentDidCatch(error: Error) {
+    console.error(error)
+  }
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="grid min-h-dvh place-items-center bg-canvas px-6 text-center">
+        <div className="grid max-w-sm justify-items-center gap-3">
+          <Logo className="size-11 rounded-xl" />
+          <h1 className="text-lg font-semibold">Something went wrong on this screen</h1>
+          <p className="text-[14px] text-muted-foreground">Your data is safe. Reload to continue.</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="h-11 rounded-xl bg-primary px-5 text-[15px] font-medium text-primary-foreground"
+          >
+            Reload
+          </button>
+        </div>
+      </div>
+    )
+  }
 }
 
 function Gate() {

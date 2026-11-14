@@ -1,0 +1,24 @@
+name: calendar
+
+services:
+  app:
+    build: .
+    image: orion-calendar:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      COOKIE_SECURE: "true"
+    ports:
+      # Loopback only: the Orxies edge proxy terminates TLS for calendar.oriondesk.space.
+      - "127.0.0.1:${CALENDAR_PORT:-8130}:8787"
+    volumes:
+      - calendar-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+volumes:
+  calendar-data:

@@ -7,7 +7,7 @@ import type { CalendarView } from "@/components/reui/event-calendar/event-calend
 import type { GanttScale } from "@/components/reui/gantt/gantt-types"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
-import { coversDay, dayKey, evStart, lastDay, rangeLabel } from "@/lib/dates"
+import { coversDay, dayKey, evStart, lastDay, parseDay, rangeLabel } from "@/lib/dates"
 import { setThemePref, useResolvedTheme } from "@/lib/theme"
 import type { PublicPayload } from "@/lib/types"
 import { withViewTransition } from "@/lib/use-media"
@@ -157,6 +157,8 @@ export function PublicView({ token }: { token: string }) {
             onScaleChange={setScale}
             onOpenEvent={setOpenId}
             onOpenDay={setDay}
+            holidays={data.holidays ?? []}
+            offDates={(data.holidays ?? []).filter((h) => h.national).map((h) => parseDay(h.date))}
           />
         </div>
       </main>
@@ -229,6 +231,7 @@ export function PublicView({ token }: { token: string }) {
             setOpenId(id)
           }}
           publicEntries={data.entries}
+          holidays={data.holidays ?? []}
         />
       )}
     </div>

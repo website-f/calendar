@@ -32,13 +32,15 @@ import type {
   GanttScale,
 } from "@/components/reui/gantt/gantt-types"
 import { dayKey, evEnd, evStart, rangeLabel, toStore } from "@/lib/dates"
-import type { Ev, Project, User } from "@/lib/types"
+import { HOLIDAY_COLOR, type Ev, type Holiday, type Project, type User } from "@/lib/types"
+import { holidayEnd, holidayStart, holidayWhere } from "@/lib/holidays"
 import { useIsMobile } from "@/lib/use-media"
 import { cn } from "@/lib/utils"
 import { AvatarStack, StatusPill } from "./bits"
 
 export type BoardMode = "calendar" | "gantt"
 const NONE = "__none"
+const HOLIDAY_ROW = "__holidays"
 const FALLBACK = "#6b7280"
 
 export interface BoardProps {
@@ -60,6 +62,10 @@ export interface BoardProps {
   onMove?: (id: string, r: { start: string; end: string; allDay: boolean }) => void
   onReorderEvents?: (changes: { id: string; sort: number; projectId: string | null }[]) => void
   onReorderProjects?: (ids: string[]) => void
+  /** Public holidays to overlay (already filtered by region and visibility). */
+  holidays?: Holiday[]
+  /** Dates to shade as non-working days. */
+  offDates?: Date[]
   className?: string
 }
 
@@ -94,13 +100,27 @@ function CalendarBoard({
   onOpenDay,
   onCreateRange,
   onMove,
+  holidays = [],
+  offDates = [],
 }: BoardProps) {
   const mobile = useIsMobile()
   const byId = useMemo(() => new Map(events.map((e) => [e.id, e])), [events])
+  const holidayById = useMemo(() => new Map(holidays.map((h) => [h.id, h])), [holidays])
 
   const calEvents = useMemo<CalendarEvent<Ev>[]>(
-    () =>
-      events.map((e) => ({
+    () => [
+      // Holidays first so they sit on top of each day; locked so nobody drags them.
+      ...holidays.map((h) => ({
+        id: h.id,
+        title: h.name,
+        start: holidayStart(h),
+        end: holidayEnd(h),
+        allDay: true,
+        color: HOLIDAY_COLOR,
+        priority: h.national ? 100 : 90,
+        readOnly: true,
+      })),
+      ...events.map((e) => ({
         id: e.id,
         title: e.title,
         start: evStart(e),
@@ -111,7 +131,8 @@ function CalendarBoard({
         readOnly: readOnly,
         data: e,
       })),
-    [events, projects, readOnly]
+    ],
+    [events, projects, readOnly, holidays]
   )
 
   const views: CalendarView[] = mobile ? ["month", "days", "day", "agenda"] : ["month", "week", "day", "agenda"]
@@ -135,12 +156,16 @@ function CalendarBoard({
       interactions={{ drag: !readOnly, resize: !readOnly, selectSlot: !readOnly }}
       scrollToHour={8}
       maxEventsPerCell="auto"
-      offDays
+      offDays={{ dates: offDates }}
       showDayAddButton={!readOnly}
       nowIndicator
       scrollbars="native"
       onEventUpdate={onEventUpdate}
-      onEventClick={(occ) => onOpenEvent?.(occ.eventId)}
+      onEventClick={(occ) => {
+        const h = holidayById.get(occ.eventId)
+        if (h) onOpenDay?.(holidayStart(h))
+        else onOpenEvent?.(occ.eventId)
+      }}
       onSlotClick={(slot) => {
         if (slot.view === "month" || slot.allDay) onOpenDay?.(slot.date)
         else if (!readOnly && slot.end)
@@ -153,6 +178,8 @@ function CalendarBoard({
       dayClassName={(d) => (dayMarks?.has(dayKey(d)) ? "ec-has-data" : undefined)}
       todayClassName="bg-primary/[0.04]"
       renderEventTooltip={({ occurrence }) => {
+        const h = holidayById.get(occurrence.eventId)
+        if (h) return <HolidayHover h={h} />
         const e = byId.get(occurrence.eventId)
         if (!e) return null
         return <EventHover e={e} projects={projects} users={users} />
@@ -174,6 +201,19 @@ function CalendarBoard({
   )
 }
 
+
+function HolidayHover({ h }: { h: Holiday }) {
+  return (
+    <div className="grid max-w-64 gap-1 py-0.5 text-left">
+      <div className="flex items-center gap-1.5">
+        <span className="size-2 shrink-0 rounded-full" style={{ background: HOLIDAY_COLOR }} />
+        <span className="font-medium">{h.name}</span>
+      </div>
+      <div className="opacity-80">{holidayWhere(h)}</div>
+      {h.tentative && <div className="opacity-80">Date may still change</div>}
+    </div>
+  )
+}
 
 function EventHover({ e, projects, users }: { e: Ev; projects: Project[]; users: User[] }) {
   const p = projects.find((x) => x.id === e.projectId)
@@ -217,13 +257,17 @@ function GanttBoard({
   scale,
   onScaleChange,
   onOpenEvent,
+  onOpenDay,
   onCreateRange,
   onMove,
   onReorderEvents,
   onReorderProjects,
+  holidays = [],
+  offDates = [],
 }: BoardProps) {
   const mobile = useIsMobile()
   const lastReorder = useRef(0)
+  const holidayById = useMemo(() => new Map(holidays.map((h) => [h.id, h])), [holidays])
 
   const { resources, ganttEvents } = useMemo(() => {
     const active = projects.filter((p) => !p.archived)
@@ -236,7 +280,19 @@ function GanttBoard({
     }
     const loose = sorted.filter((e) => !e.projectId || !active.some((p) => p.id === e.projectId)).map(row)
     if (loose.length || !groups.length) groups.push({ id: NONE, title: "No project", color: FALLBACK, children: loose })
-    const ganttEvents: GanttEvent<Ev>[] = sorted.map((e) => ({
+    // A locked row for public holidays sits above the projects.
+    if (holidays.length) groups.unshift({ id: HOLIDAY_ROW, title: "Public holidays", color: HOLIDAY_COLOR, scheduleMode: "multiple" })
+    const holidayBars: GanttEvent<Ev>[] = holidays.map((h) => ({
+      id: h.id,
+      title: h.name,
+      start: holidayStart(h),
+      end: holidayEnd(h),
+      allDay: true,
+      color: HOLIDAY_COLOR,
+      resourceId: HOLIDAY_ROW,
+      readOnly: true,
+    }))
+    const ganttEvents: GanttEvent<Ev>[] = [...holidayBars, ...sorted.map((e) => ({
       id: e.id,
       title: e.title,
       start: evStart(e),
@@ -248,9 +304,9 @@ function GanttBoard({
       resourceId: `ev:${e.id}`,
       readOnly,
       data: e,
-    }))
+    }))]
     return { resources: groups, ganttEvents }
-  }, [events, projects, readOnly])
+  }, [events, projects, readOnly, holidays])
 
   const byId = useMemo(() => new Map(events.map((e) => [e.id, e])), [events])
 
@@ -265,11 +321,12 @@ function GanttBoard({
     const now = Date.now()
     if (now - lastReorder.current < 150) return
     lastReorder.current = now
-    const projectOrder = proposal.resources.map((g) => g.id).filter((id) => id !== NONE)
+    const projectOrder = proposal.resources.map((g) => g.id).filter((id) => id !== NONE && id !== HOLIDAY_ROW)
     const current = projects.filter((p) => !p.archived).map((p) => p.id)
     if (projectOrder.join() !== current.join()) onReorderProjects?.(projectOrder)
     const changes: { id: string; sort: number; projectId: string | null }[] = []
     for (const g of proposal.resources) {
+      if (g.id === HOLIDAY_ROW) continue
       ;(g.children ?? []).forEach((child, i) => {
         const id = child.id.replace(/^ev:/, "")
         const e = byId.get(id)
@@ -317,11 +374,16 @@ function GanttBoard({
       weekStartsOn={1}
       interactions={{ drag: !readOnly, resize: !readOnly, selectSlot: !readOnly }}
       onEventUpdate={onEventUpdate}
-      onEventClick={(occ) => onOpenEvent?.(occ.eventId)}
+      onEventClick={(occ) => {
+        const h = holidayById.get(occ.eventId)
+        if (h) onOpenDay?.(holidayStart(h))
+        else onOpenEvent?.(occ.eventId)
+      }}
       onResourceClick={({ resource, isGroup }) => {
-        if (!isGroup) onOpenEvent?.(resource.id.replace(/^ev:/, ""))
+        if (!isGroup && resource.id.startsWith("ev:")) onOpenEvent?.(resource.id.replace(/^ev:/, ""))
       }}
       onSlotClick={(slot) => {
+        if (slot.resourceId === HOLIDAY_ROW) return
         if (readOnly || !onCreateRange) return
         const end = new Date(slot.date)
         end.setDate(end.getDate() + 1)
@@ -330,6 +392,7 @@ function GanttBoard({
       }}
       onResourceReorder={readOnly ? undefined : onReorder}
       canReorderResource={(p) => {
+        if (p.resourceId === HOLIDAY_ROW || p.parentId === HOLIDAY_ROW) return false
         const isEventRow = p.resourceId.startsWith("ev:")
         return isEventRow ? p.parentId !== null : p.parentId === null
       }}
@@ -343,7 +406,7 @@ function GanttBoard({
       }}
       displayCreateTaskHint={!readOnly}
       displayScheduleHint={false}
-      offDays
+      offDays={{ dates: offDates }}
       nowIndicator
       zoomControl={!mobile}
       rowCheckboxes={false}

@@ -19,6 +19,16 @@ import {
   type Env,
   type User,
 } from "./auth.ts"
+import {
+  MY_STATES,
+  holidayStatus,
+  holidaysEnabled,
+  getHolidayRegion,
+  listHolidays,
+  refreshHolidays,
+  setHolidayRegion,
+  setHolidaysEnabled,
+} from "./holidays.ts"
 
 const PORT = Number(process.env.PORT ?? 8787)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -474,6 +484,7 @@ app.get("/api/public/:token", (c) => {
       updatedBy: null,
     })),
     entries,
+    holidays: listHolidays(),
   })
 })
 
@@ -492,6 +503,8 @@ app.get("/api/bootstrap", (c) => {
     projects: listProjects(),
     events: listEvents(),
     shares: canEdit(user) ? all(`SELECT * FROM shares ORDER BY created_at DESC`).map(mapShare) : [],
+    holidays: listHolidays(),
+    holidaySettings: { enabled: holidaysEnabled(), region: getHolidayRegion(), states: MY_STATES, ...holidayStatus() },
     dayMarks: all(`SELECT day, COUNT(*) AS n FROM entries WHERE day IS NOT NULL GROUP BY day`).map(
       (r) => ({ day: String(r.day), n: Number(r.n) })
     ),
@@ -872,6 +885,30 @@ app.delete("/api/entries/:id", (c) => {
   return c.json({ ok: true })
 })
 
+// Public holiday settings (admin)
+app.patch("/api/settings/holidays", async (c) => {
+  const user = c.get("user")
+  assertAdmin(user)
+  const input = await body(
+    c,
+    z.object({
+      enabled: z.boolean().optional(),
+      region: z.union([z.literal("ALL"), z.literal(""), z.enum(MY_STATES)]).optional(),
+    })
+  )
+  if (input.enabled !== undefined) setHolidaysEnabled(input.enabled)
+  if (input.region !== undefined) setHolidayRegion(input.region)
+  bumpVersion()
+  return c.json({ ok: true })
+})
+
+app.post("/api/settings/holidays/refresh", async (c) => {
+  assertAdmin(c.get("user"))
+  await refreshHolidays(true)
+  bumpVersion()
+  return c.json(holidayStatus())
+})
+
 // Read a Google Sheet that is shared "Anyone with the link" as CSV, without any Google permission.
 // Only the sheet id/gid from the pasted link are used, so this can only ever reach docs.google.com.
 app.get("/api/sheets/csv", async (c) => {
@@ -1015,6 +1052,8 @@ if (existsSync(DIST)) {
     return c.html(indexHtml)
   })
 }
+
+void refreshHolidays()
 
 serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`calendar server on http://${info.address}:${info.port}`)

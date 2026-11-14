@@ -17,6 +17,7 @@ import {
   UsersIcon,
   XIcon,
   FolderPlusIcon,
+  PartyPopperIcon,
 } from "lucide-react"
 import type { CalendarView } from "@/components/reui/event-calendar/event-calendar-types"
 import type { GanttScale } from "@/components/reui/gantt/gantt-types"
@@ -47,9 +48,10 @@ import {
   useLiveSync,
   useProjectMutations,
 } from "@/lib/data"
-import { coversDay, dayKey, evStart, rangeLabel } from "@/lib/dates"
+import { coversDay, dayKey, evStart, parseDay, rangeLabel } from "@/lib/dates"
+import { offDayDates } from "@/lib/holidays"
 import type { Bootstrap, Ev, Project, Share } from "@/lib/types"
-import { SWATCHES } from "@/lib/types"
+import { HOLIDAY_COLOR, SWATCHES } from "@/lib/types"
 import { useIsDesktop, withViewTransition } from "@/lib/use-media"
 import { cn } from "@/lib/utils"
 import { Avatar, Logo, Panel, FieldRow, Segmented, Swatches } from "./bits"
@@ -61,6 +63,7 @@ import { SettingsPanel } from "./settings-panel"
 import { SharePanel } from "./share-panel"
 
 const NONE = "__none"
+const HOLIDAYS_KEY = "__holidays"
 const LS_HIDDEN = "cal.hiddenProjects"
 const LS_MODE = "cal.mode"
 
@@ -150,6 +153,9 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
     })
   }, [boot.events, hidden, people, query, projects])
   const dayMarks = useMemo(() => new Set(boot.dayMarks.map((d) => d.day)), [boot.dayMarks])
+  const showHolidays = !hidden.includes(HOLIDAYS_KEY)
+  const holidays = useMemo(() => (showHolidays ? boot.holidays : []), [showHolidays, boot.holidays])
+  const offDates = useMemo(() => offDayDates(holidays, boot.holidaySettings.region), [holidays, boot.holidaySettings.region])
   const current = evPanel?.id ? (boot.events.find((e) => e.id === evPanel.id) ?? null) : null
 
   // Close the editor if a teammate deletes the event under us.
@@ -312,7 +318,7 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
             )}
           </header>
 
-          {(people.length > 0 || hidden.length > 0) && (
+          {(people.length > 0 || hidden.some((k) => k !== HOLIDAYS_KEY)) && (
             <div className="flex items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-[12px] text-muted-foreground md:px-4">
               <span>
                 Showing {visible.length} of {boot.events.length} events
@@ -322,7 +328,7 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
                 className="font-medium text-foreground underline-offset-2 hover:underline"
                 onClick={() => {
                   setPeople([])
-                  setHidden([])
+                  setHidden(hidden.filter((k) => k === HOLIDAYS_KEY))
                 }}
               >
                 Show all
@@ -349,6 +355,8 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
             onMove={(id, r) => updateEvent.mutate({ id, ...r })}
             onReorderEvents={reorderEvents}
             onReorderProjects={reorderProjects}
+            holidays={holidays}
+            offDates={offDates}
           />
         </div>
 
@@ -432,6 +440,7 @@ export function Workspace({ boot, onSignOut }: { boot: Bootstrap; onSignOut: () 
           readOnly={!canEdit}
           onOpenEvent={openEvent}
           onNewEvent={(d) => newEvent({ start: dayKey(d), end: dayKey(addDays(d, 1)), allDay: true })}
+          holidays={holidays}
         />
       )}
       <SharePanel
@@ -713,6 +722,9 @@ function Sidebar({
               )
             })}
         </ul>
+        {boot.holidaySettings.enabled && boot.holidays.length > 0 && (
+          <HolidayToggle boot={boot} on={!hidden.includes(HOLIDAYS_KEY)} onToggle={() => toggle(HOLIDAYS_KEY)} onOpenDay={onOpenDay} />
+        )}
         {active.length === 0 && canEdit && (
           <button
             type="button"
@@ -736,6 +748,48 @@ function Sidebar({
           </ul>
         )}
       </section>
+    </div>
+  )
+}
+
+function HolidayToggle({
+  boot,
+  on,
+  onToggle,
+  onOpenDay,
+}: {
+  boot: Bootstrap
+  on: boolean
+  onToggle: () => void
+  onOpenDay: (d: Date) => void
+}) {
+  const today = dayKey(new Date())
+  const next = boot.holidays.find((h) => h.date >= today && (h.national || boot.holidaySettings.region !== "ALL"))
+  const region = boot.holidaySettings.region
+  return (
+    <div className="mt-1 rounded-xl">
+      <button type="button" onClick={onToggle} aria-pressed={on} className="flex h-10 w-full items-center gap-2.5 rounded-xl px-2 text-left transition-colors hover:bg-background/70 md:h-9">
+        <span
+          className={cn("size-3 shrink-0 rounded-[4px] transition-all", !on && "scale-75 opacity-40")}
+          style={{ background: on ? HOLIDAY_COLOR : "transparent", boxShadow: `inset 0 0 0 1.5px ${HOLIDAY_COLOR}` }}
+        />
+        <span className={cn("truncate text-[14px] md:text-[13px]", !on && "text-muted-foreground line-through decoration-muted-foreground/40")}>
+          Public holidays
+        </span>
+        <span className="ml-auto truncate text-[11px] text-muted-foreground">{region === "ALL" ? "All states" : region || "National"}</span>
+      </button>
+      {on && next && (
+        <button
+          type="button"
+          onClick={() => onOpenDay(parseDay(next.date))}
+          className="mx-2 mb-1 flex w-[calc(100%-1rem)] items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-muted-foreground hover:bg-background/70"
+        >
+          <PartyPopperIcon className="size-3.5 shrink-0" style={{ color: HOLIDAY_COLOR }} />
+          <span className="truncate">
+            Next: <span className="font-medium text-foreground">{next.name}</span>, {format(parseDay(next.date), "EEE d MMM")}
+          </span>
+        </button>
+      )}
     </div>
   )
 }

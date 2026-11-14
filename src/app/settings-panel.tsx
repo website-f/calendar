@@ -4,12 +4,13 @@ import { toast } from "sonner"
 import { MonitorIcon, MoonIcon, SunIcon, Trash2Icon, UserPlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { setThemePref, useThemePref } from "@/lib/theme"
 import type { Bootstrap, Role } from "@/lib/types"
 import { Avatar, FieldRow, NativeSelect, Panel, Segmented, Swatches } from "./bits"
 
-type Tab = "profile" | "team" | "look"
+type Tab = "profile" | "team" | "holidays" | "look"
 
 export function SettingsPanel({
   open,
@@ -33,12 +34,13 @@ export function SettingsPanel({
         className="mb-5 w-full"
         options={[
           { value: "profile", label: "Profile" },
-          ...(isAdmin ? [{ value: "team" as Tab, label: "Team" }] : []),
+          ...(isAdmin ? [{ value: "team" as Tab, label: "Team" }, { value: "holidays" as Tab, label: "Holidays" }] : []),
           { value: "look", label: "Appearance" },
         ]}
       />
       {tab === "profile" && <Profile boot={boot} />}
       {tab === "team" && isAdmin && <Team boot={boot} />}
+      {tab === "holidays" && isAdmin && <Holidays boot={boot} />}
       {tab === "look" && <Look />}
     </Panel>
   )
@@ -210,6 +212,71 @@ function Team({ boot }: { boot: Bootstrap }) {
           Add teammate
         </Button>
       </form>
+    </div>
+  )
+}
+
+function Holidays({ boot }: { boot: Bootstrap }) {
+  const qc = useQueryClient()
+  const hs = boot.holidaySettings
+  const [busy, setBusy] = useState(false)
+  const save = async (patch: { enabled?: boolean; region?: string }) => {
+    setBusy(true)
+    try {
+      await api("/api/settings/holidays", { method: "PATCH", body: patch })
+      await qc.invalidateQueries({ queryKey: ["bootstrap"] })
+      toast.success("Holiday settings saved")
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="grid gap-5">
+      <p className="text-[13px] text-muted-foreground">
+        Malaysian public holidays come from Google's public holiday calendar: free, updated daily, and shown to everyone on the calendar, the Gantt
+        chart and share links.
+      </p>
+      <label className="flex items-center justify-between rounded-xl bg-muted/60 px-3 py-2.5">
+        <span className="text-[13px] font-medium">Show public holidays</span>
+        <Switch checked={hs.enabled} disabled={busy} onCheckedChange={(v) => save({ enabled: v })} />
+      </label>
+      <FieldRow label="Which holidays" hint="National holidays always show. State holidays follow this choice.">
+        <NativeSelect value={hs.region} onChange={(v) => save({ region: v })} disabled={busy || !hs.enabled}>
+          <option value="ALL">All states (national and every state holiday)</option>
+          <option value="">National holidays only</option>
+          {hs.states.map((st) => (
+            <option key={st} value={st}>
+              National + {st}
+            </option>
+          ))}
+        </NativeSelect>
+      </FieldRow>
+      <div className="flex items-center justify-between gap-3 rounded-xl border bg-card px-3 py-2.5 text-[13px]">
+        <span className="text-muted-foreground">
+          {hs.count} holidays loaded{hs.fetchedAt ? `, updated ${new Date(hs.fetchedAt).toLocaleString()}` : ""}
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await api("/api/settings/holidays/refresh", { body: {} })
+              await qc.invalidateQueries({ queryKey: ["bootstrap"] })
+              toast.success("Holidays refreshed")
+            } catch (err) {
+              toast.error((err as Error).message)
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          Refresh now
+        </Button>
+      </div>
     </div>
   )
 }

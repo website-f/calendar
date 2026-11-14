@@ -77,6 +77,28 @@ export interface Share {
   createdAt: string
 }
 
+export interface Holiday {
+  id: string
+  /** "YYYY-MM-DD" first day; end is exclusive. */
+  date: string
+  end: string
+  name: string
+  national: boolean
+  states: string[]
+  tentative: boolean
+}
+
+export interface HolidaySettings {
+  enabled: boolean
+  /** "ALL" = every state, "" = national only, otherwise one state. */
+  region: string
+  states: string[]
+  count: number
+  fetchedAt: string | null
+}
+
+export const HOLIDAY_COLOR = "#0e9f6e"
+
 export interface Bootstrap {
   me: User & { role: Role; email: string }
   version: number
@@ -85,6 +107,8 @@ export interface Bootstrap {
   events: Ev[]
   shares: Share[]
   dayMarks: { day: string; n: number }[]
+  holidays: Holiday[]
+  holidaySettings: HolidaySettings
 }
 
 export interface AppConfig {
@@ -106,6 +130,7 @@ export interface PublicPayload {
   users: User[]
   events: Ev[]
   entries: Entry[]
+  holidays: Holiday[]
 }
 
 export interface Activity {

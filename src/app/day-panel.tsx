@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react"
 import { addDays, differenceInCalendarDays, format, isToday } from "date-fns"
-import { CalendarOffIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, ArrowUpRightIcon } from "lucide-react"
+import { PartyPopperIcon, CalendarOffIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon, ArrowUpRightIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useDayEntries } from "@/lib/data"
 import { coversDay, dayKey, evStart, rangeLabel, spanDays } from "@/lib/dates"
-import type { Entry, Ev, Project, User } from "@/lib/types"
+import { HOLIDAY_COLOR, type Entry, type Ev, type Holiday, type Project, type User } from "@/lib/types"
+import { holidaysOn, holidayWhere } from "@/lib/holidays"
 import { cn } from "@/lib/utils"
 import { AvatarStack, EmptyNote, Panel, ProgressLine, StatusPill } from "./bits"
 import { EntryComposer, EntryList } from "./entries"
@@ -21,6 +22,7 @@ export function DayPanel({
   onOpenEvent,
   onNewEvent,
   publicEntries,
+  holidays = [],
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
@@ -34,6 +36,7 @@ export function DayPanel({
   onNewEvent?: (day: Date) => void
   /** Public view passes entries directly instead of fetching. */
   publicEntries?: Entry[]
+  holidays?: Holiday[]
 }) {
   const key = dayKey(day)
   const todays = useMemo(
@@ -48,6 +51,7 @@ export function DayPanel({
     ? publicEntries.filter((x) => x.day === key || (x.day === null && todays.some((e) => e.id === x.eventId)))
     : (fetched.data ?? [])
   const [composeFor, setComposeFor] = useState<string | null>(null)
+  const todaysHolidays = holidaysOn(holidays, key)
 
   const header = (
     <div className="flex items-center gap-2">
@@ -84,6 +88,22 @@ export function DayPanel({
         ) : undefined
       }
     >
+      {todaysHolidays.length > 0 && (
+        <div className="mb-3 grid gap-1.5">
+          {todaysHolidays.map((h) => (
+            <div key={h.id} className="flex items-start gap-3 rounded-2xl border px-4 py-3" style={{ borderColor: `${HOLIDAY_COLOR}55`, background: `${HOLIDAY_COLOR}12` }}>
+              <PartyPopperIcon className="mt-0.5 size-4 shrink-0" style={{ color: HOLIDAY_COLOR }} />
+              <div className="min-w-0">
+                <p className="text-[14px] font-semibold">{h.name}</p>
+                <p className="text-[12px] text-muted-foreground">
+                  {holidayWhere(h)}
+                  {h.tentative && ". Date may still change"}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {todays.length === 0 ? (
         <EmptyNote icon={<CalendarOffIcon className="size-5" />} title="Nothing scheduled">
           {readOnly ? "There are no events on this date." : "Add an event for this date, or drag across days on the calendar to plan a range."}

@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { useConfig, useEntryMutations } from "@/lib/data"
-import { googleConfigured, pickFromDrive } from "@/lib/google"
+import { googleConfigured, googleLinkKind, pickFromDrive, pickerSupported } from "@/lib/google"
 import type { Entry, EntryKind } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { relTime } from "@/lib/dates"
@@ -109,7 +109,7 @@ export function EntryList({
                     className="mt-1 inline-flex max-w-full items-center gap-1 text-[12px] font-medium text-primary hover:underline"
                   >
                     <ExternalLinkIcon className="size-3 shrink-0" />
-                    <span className="truncate">{x.kind === "file" ? "Open in Google Drive" : x.url.replace(/^https?:\/\//, "")}</span>
+                    <span className="truncate">{x.kind === "file" ? openLabel(x.meta.mimeType) : x.url.replace(/^https?:\/\//, "")}</span>
                   </a>
                 )}
                 {!compact && <div className="mt-1 text-[11px] text-muted-foreground/80">{relTime(x.updatedAt)}</div>}
@@ -156,15 +156,18 @@ export function EntryComposer({ eventId, day }: { eventId: string; day: string |
 
   const save = () => {
     if (!canSave) return
+    // A pasted Google Drive / Docs / Sheets link is stored as a file entry so it shows its type.
+    const g = kind === "link" ? googleLinkKind(url.trim()) : null
     create.mutate(
       {
         eventId,
         day,
-        kind,
-        title: title.trim() || (kind === "link" ? url.trim().replace(/^https?:\/\//, "").slice(0, 80) : ""),
+        kind: g ? "file" : kind,
+        title: title.trim() || g?.label || (kind === "link" ? url.trim().replace(/^https?:\/\//, "").slice(0, 80) : ""),
         body: body.trim(),
         value: value.trim(),
         url: url.trim(),
+        meta: g ? { mimeType: g.mimeType, source: "link" } : undefined,
       },
       { onSuccess: reset }
     )
@@ -212,14 +215,14 @@ export function EntryComposer({ eventId, day }: { eventId: string; day: string |
             </button>
           )
         })}
-        {googleConfigured(cfg) && (
+        {googleConfigured(cfg) && pickerSupported() && (
           <button
             type="button"
             onClick={attachDrive}
             className="ml-auto inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:h-7"
           >
             <DriveGlyph className="size-3.5" />
-            Drive
+            Browse Drive
           </button>
         )}
       </div>
@@ -231,7 +234,7 @@ export function EntryComposer({ eventId, day }: { eventId: string; day: string |
         }}
       >
         {kind === "link" && (
-          <Input inputMode="url" type="url" placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)} />
+          <Input inputMode="url" type="url" placeholder="Paste a web, Google Drive, Docs or Sheets link" value={url} onChange={(e) => setUrl(e.target.value)} />
         )}
         <div className="flex gap-2">
           <Input
@@ -262,6 +265,15 @@ export function EntryComposer({ eventId, day }: { eventId: string; day: string |
       </form>
     </div>
   )
+}
+
+function openLabel(mime: unknown) {
+  const m = String(mime ?? "")
+  if (m.includes("spreadsheet")) return "Open in Google Sheets"
+  if (m.includes("document")) return "Open in Google Docs"
+  if (m.includes("presentation")) return "Open in Google Slides"
+  if (m.includes("form")) return "Open in Google Forms"
+  return "Open in Google Drive"
 }
 
 export function DriveGlyph({ className }: { className?: string }) {

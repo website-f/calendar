@@ -14,6 +14,7 @@ import {
   ExternalLinkIcon,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 import { useEventMutations } from "@/lib/data"
 import { dayKey, safeDate } from "@/lib/dates"
@@ -26,7 +27,9 @@ import {
   hasLiveToken,
   listGoogleCalendar,
   onGoogleChange,
+  googleFileId,
   pickFromDrive,
+  pickerSupported,
   pushToGoogleCalendar,
   readSheet,
   type GCalItem,
@@ -176,12 +179,29 @@ function SheetsCard({ cfg, events, projects, users, canEdit }: { cfg: Cfg; event
     }
   }
 
+  const [sheetLink, setSheetLink] = useState("")
+
   const doPick = async () => {
+    const [file] = await pickFromDrive(cfg, "sheets", false).catch((err) => {
+      toast.error((err as Error).message)
+      return []
+    })
+    if (file) await loadSheet(file.id)
+  }
+
+  const doLink = async () => {
+    const id = googleFileId(sheetLink)
+    if (!id) {
+      toast.error("Paste the link of a Google Sheet (it contains /spreadsheets/d/...).")
+      return
+    }
+    await loadSheet(id)
+  }
+
+  const loadSheet = async (spreadsheetId: string) => {
     setBusy("import")
     try {
-      const [file] = await pickFromDrive(cfg, "sheets", false)
-      if (!file) return
-      const { title, rows } = await readSheet(cfg, file.id)
+      const { title, rows } = await readSheet(cfg, spreadsheetId)
       if (rows.length < 2) throw new Error("That sheet has no rows under the header.")
       const cols = detectColumns(rows[0]!)
       if (cols.title === undefined || cols.start === undefined)
@@ -243,12 +263,35 @@ function SheetsCard({ cfg, events, projects, users, canEdit }: { cfg: Cfg; event
           <Button variant="outline" onClick={doExport} disabled={busy !== null}>
             {busy === "export" ? <Loader2Icon className="animate-spin" /> : <UploadIcon />} Export to a new sheet
           </Button>
-          {canEdit && (
-            <Button variant="outline" onClick={doPick} disabled={busy !== null}>
-              {busy === "import" ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />} Import from a sheet
-            </Button>
-          )}
         </div>
+        {canEdit && (
+          <form
+            className="grid gap-2"
+            onSubmit={(e) => {
+              e.preventDefault()
+              doLink()
+            }}
+          >
+            <span className="text-[12px] font-medium text-muted-foreground">Import events from a Google Sheet</span>
+            <div className="flex gap-2">
+              <Input
+                inputMode="url"
+                placeholder="Paste the Google Sheet link"
+                value={sheetLink}
+                onChange={(e) => setSheetLink(e.target.value)}
+                className="flex-1"
+              />
+              <Button type="submit" variant="outline" disabled={busy !== null || !sheetLink.trim()}>
+                {busy === "import" ? <Loader2Icon className="animate-spin" /> : <DownloadIcon />} Read
+              </Button>
+            </div>
+            {pickerSupported() && (
+              <button type="button" onClick={doPick} disabled={busy !== null} className="justify-self-start text-[12px] font-medium text-primary hover:underline">
+                Or browse your Drive for a sheet
+              </button>
+            )}
+          </form>
+        )}
         {lastUrl && (
           <a href={lastUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[13px] font-medium text-primary hover:underline">
             <ExternalLinkIcon className="size-3.5" /> Open the new spreadsheet
@@ -437,22 +480,14 @@ function CalendarCard({ cfg, events, projects, canEdit }: { cfg: Cfg; events: Ev
 
 // ---------------------------------------------------------------- Drive
 
-function DriveCard({ cfg }: { cfg: Cfg }) {
+function DriveCard({ cfg: _cfg }: { cfg: Cfg }) {
   return (
     <Card icon={<FolderOpenIcon className="size-4" />} title="Google Drive">
-      <p className="mb-3 text-[13px] text-muted-foreground">
-        Attach Drive files, Docs and Sheets to any event or date from its Daily data tab. Files stay in Drive; the calendar keeps a link.
+      <p className="text-[13px] text-muted-foreground">
+        Attach Drive files, Docs and Sheets to any event or date: open the event, go to <span className="font-medium text-foreground">Daily data</span>, choose{" "}
+        <span className="font-medium text-foreground">Link</span> and paste the file's share link. Files stay in Drive; the calendar keeps the link.
+        {pickerSupported() && " In this browser you can also use Browse Drive there."}
       </p>
-      <Button
-        variant="outline"
-        onClick={() =>
-          pickFromDrive(cfg, "any", true)
-            .then((f) => f.length && toast.success(`${f.length} file${f.length > 1 ? "s" : ""} can now be attached from any event`))
-            .catch((e) => toast.error(e.message))
-        }
-      >
-        <FolderOpenIcon /> Browse my Drive
-      </Button>
     </Card>
   )
 }

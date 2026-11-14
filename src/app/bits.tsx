@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { useIsDesktop } from "@/lib/use-media"
 import { SWATCHES, type Status, type User, STATUS_LABEL } from "@/lib/types"
+import { isPickerActive, onPickerChange } from "@/lib/google"
 
 /** Bottom sheet on phones, side panel on desktop. Built on Dialog so inputs behave in iOS Safari. */
 export function Panel({
@@ -30,8 +31,17 @@ export function Panel({
   // On touch screens, focus the panel itself rather than the first field so the keyboard stays down.
   const focusRef = React.useRef<HTMLDivElement>(null)
   const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches
+  const picking = React.useSyncExternalStore(onPickerChange, isPickerActive, () => false)
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      modal={!picking}
+      // Clicks inside Google's Picker land outside this panel; don't treat them as "close".
+      onOpenChange={(v) => {
+        if (!v && isPickerActive()) return
+        onOpenChange(v)
+      }}
+    >
       <SheetContent
         initialFocus={coarse ? focusRef : true}
         side={desktop ? "right" : "bottom"}

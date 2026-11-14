@@ -9,6 +9,8 @@ import { STATUS_LABEL } from "./types"
 
 const SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
+  // Read a sheet by its link. The Drive Picker needs third-party cookies, which Safari and Brave block.
+  "https://www.googleapis.com/auth/spreadsheets.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "openid",
   "email",
@@ -50,6 +52,47 @@ export function connectedAccount(): string | null {
 
 export function hasLiveToken() {
   return Boolean(token && token.exp > Date.now() + 30_000)
+}
+
+/** Google's Drive Picker needs third-party cookies. Safari, iOS browsers and Brave block them by default. */
+export function pickerSupported(): boolean {
+  const ua = navigator.userAgent
+  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  const isSafari = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua)
+  const isBrave = Boolean((navigator as Navigator & { brave?: unknown }).brave)
+  return !(isIOS || isSafari || isBrave)
+}
+
+/** While the Picker is up, our modal panels step aside so its iframe can take focus and clicks. */
+let pickerActive = false
+const pickerListeners = new Set<() => void>()
+export const isPickerActive = () => pickerActive
+export function onPickerChange(fn: () => void) {
+  pickerListeners.add(fn)
+  return () => pickerListeners.delete(fn)
+}
+function setPickerActive(v: boolean) {
+  pickerActive = v
+  pickerListeners.forEach((f) => f())
+}
+
+/** Pull the file id out of any Google Docs/Sheets/Drive link (or accept a bare id). */
+export function googleFileId(input: string): string | null {
+  const s = input.trim()
+  const m = s.match(/\/d\/([a-zA-Z0-9_-]{20,})/) ?? s.match(/[?&]id=([a-zA-Z0-9_-]{20,})/) ?? s.match(/\/folders\/([a-zA-Z0-9_-]{20,})/)
+  if (m) return m[1]!
+  return /^[a-zA-Z0-9_-]{25,}$/.test(s) ? s : null
+}
+
+/** Best-effort file type from a Google link, for icons and default titles. */
+export function googleLinkKind(url: string): { label: string; mimeType: string } | null {
+  if (/docs\.google\.com\/spreadsheets/.test(url)) return { label: "Google Sheet", mimeType: "application/vnd.google-apps.spreadsheet" }
+  if (/docs\.google\.com\/document/.test(url)) return { label: "Google Doc", mimeType: "application/vnd.google-apps.document" }
+  if (/docs\.google\.com\/presentation/.test(url)) return { label: "Google Slides", mimeType: "application/vnd.google-apps.presentation" }
+  if (/docs\.google\.com\/forms/.test(url)) return { label: "Google Form", mimeType: "application/vnd.google-apps.form" }
+  if (/drive\.google\.com\/drive\/(u\/\d+\/)?folders/.test(url)) return { label: "Drive folder", mimeType: "application/vnd.google-apps.folder" }
+  if (/drive\.google\.com/.test(url)) return { label: "Drive file", mimeType: "application/octet-stream" }
+  return null
 }
 
 export function onGoogleChange(fn: () => void) {
@@ -165,7 +208,8 @@ export async function pickFromDrive(cfg: Cfg, kind: PickerKind = "any", multi = 
   const access = await getToken(cfg)
   await ensurePicker()
   const g = window.google
-  return new Promise((resolve) => {
+  setPickerActive(true)
+  return new Promise<PickedFile[]>((resolve) => {
     let view: any
     if (kind === "sheets") view = new g.picker.DocsView(g.picker.ViewId.SPREADSHEETS)
     else if (kind === "docs") view = new g.picker.DocsView(g.picker.ViewId.DOCUMENTS)
@@ -178,6 +222,7 @@ export async function pickFromDrive(cfg: Cfg, kind: PickerKind = "any", multi = 
       .setOrigin(window.location.origin)
       .setSize(Math.min(1051, window.innerWidth - 16), Math.min(650, window.innerHeight - 32))
       .setCallback((data: any) => {
+        if (data.action === g.picker.Action.PICKED || data.action === g.picker.Action.CANCEL) setPickerActive(false)
         if (data.action === g.picker.Action.PICKED) {
           resolve(
             (data.docs ?? []).map((d: any) => ({

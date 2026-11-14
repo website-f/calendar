@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react"
 import { CheckIcon, ChevronDownIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useIsDesktop } from "@/lib/use-media"
 import { SWATCHES, type Status, type User, STATUS_LABEL } from "@/lib/types"
 import { isPickerActive, onPickerChange } from "@/lib/google"
@@ -132,25 +133,87 @@ export function Segmented<T extends string>({
   )
 }
 
+interface SelectOption {
+  value: string
+  label: React.ReactNode
+  text: string
+  disabled?: boolean
+}
+
+/** Read <option> children (as written for a native select) into a list of options. */
+function readOptions(children: React.ReactNode): SelectOption[] {
+  const out: SelectOption[] = []
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement<React.OptionHTMLAttributes<HTMLOptionElement>>(child)) return
+    if (child.type === React.Fragment) {
+      out.push(...readOptions((child.props as { children?: React.ReactNode }).children))
+      return
+    }
+    const p = child.props
+    const label = p.children
+    const text = React.Children.toArray(label).map((x) => (typeof x === "string" || typeof x === "number" ? String(x) : "")).join("")
+    out.push({ value: String(p.value ?? text), label, text, disabled: p.disabled })
+  })
+  return out
+}
+
+/**
+ * Themed dropdown (Base UI Select) with a native-select-like API: pass <option> children,
+ * get the chosen value back as a string. Replaces the browser's default dropdown everywhere.
+ */
 export function NativeSelect({
   value,
   onChange,
   children,
   className,
-  ...rest
-}: Omit<React.ComponentProps<"select">, "onChange"> & { onChange: (v: string) => void }) {
+  disabled,
+  placeholder,
+  "aria-label": ariaLabel,
+}: {
+  value: string | number | readonly string[] | undefined
+  onChange: (v: string) => void
+  children: React.ReactNode
+  className?: string
+  disabled?: boolean
+  placeholder?: string
+  "aria-label"?: string
+}) {
+  const options = React.useMemo(() => readOptions(children), [children])
+  const current = String(value ?? "")
+  const selected = options.find((o) => o.value === current)
   return (
-    <div className={cn("relative", className)}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10 w-full appearance-none rounded-lg border border-input bg-background pr-9 pl-3 text-base outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/40 md:h-8 md:text-sm dark:bg-input/30"
-        {...rest}
+    <Select
+      value={current}
+      onValueChange={(v) => v !== null && onChange(String(v))}
+      items={options.map((o) => ({ value: o.value, label: o.label }))}
+      disabled={disabled}
+    >
+      <SelectTrigger
+        aria-label={ariaLabel}
+        className={cn(
+          "h-10 w-full min-w-0 bg-background pl-3 text-left text-[15px] md:h-8 md:text-sm dark:bg-input/30",
+          !selected && "text-muted-foreground",
+          className
+        )}
       >
-        {children}
-      </select>
-      <ChevronDownIcon className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground" />
-    </div>
+        <SelectValue className="min-w-0 truncate">{() => (selected ? selected.label : (placeholder ?? "Choose..."))}</SelectValue>
+      </SelectTrigger>
+      <SelectContent
+        alignItemWithTrigger={false}
+        className="max-h-[min(var(--available-height),20rem)] min-w-(--anchor-width) rounded-xl p-1 shadow-float"
+      >
+        {options.map((o) => (
+          <SelectItem
+            key={o.value}
+            value={o.value}
+            disabled={o.disabled}
+            className="min-h-10 rounded-lg py-2 pr-8 pl-2.5 text-[15px] md:min-h-8 md:py-1.5 md:text-sm [&>span:first-child]:whitespace-normal"
+          >
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 

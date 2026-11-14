@@ -100,7 +100,7 @@ function CalendarBoard({
         end: evEnd(e),
         allDay: e.allDay,
         color: colorOf(e, projects),
-        priority: e.priority,
+        // No priority here: REUI stacks higher priority first, and events must follow date order.
         readOnly: readOnly,
         data: e,
       })),

@@ -48,11 +48,17 @@ export default function GanttBoard({
   const { resources, ganttEvents } = useMemo(() => {
     const active = projects.filter((p) => !p.archived)
     const groups: GanttResource[] = []
-    const sorted = [...events].sort((a, b) => a.sort - b.sort || a.start.localeCompare(b.start))
+    // Rows follow the calendar: earliest start first, then the earlier finish, then title.
+    const sorted = [...events].sort(byDate)
     const row = (e: Ev): GanttResource => ({ id: `ev:${e.id}`, title: e.title, color: colorOf(e, projects), scheduleMode: "single" })
-    for (const p of active) {
-      const kids = sorted.filter((e) => e.projectId === p.id).map(row)
-      groups.push({ id: p.id, title: p.name, color: p.color, children: kids })
+    const projectGroups = active.map((p) => {
+      const kids = sorted.filter((e) => e.projectId === p.id)
+      return { p, kids, first: kids.length ? evStart(kids[0]!).getTime() : Number.POSITIVE_INFINITY }
+    })
+    // Projects are ordered by their earliest event; projects with no events go last, by name.
+    projectGroups.sort((a, b) => a.first - b.first || a.p.name.localeCompare(b.p.name))
+    for (const { p, kids } of projectGroups) {
+      groups.push({ id: p.id, title: p.name, color: p.color, children: kids.map(row) })
     }
     const loose = sorted.filter((e) => !e.projectId || !active.some((p) => p.id === e.projectId)).map(row)
     if (loose.length || !groups.length) groups.push({ id: NONE, title: "No project", color: FALLBACK, children: loose })
@@ -97,17 +103,15 @@ export default function GanttBoard({
     const now = Date.now()
     if (now - lastReorder.current < 150) return
     lastReorder.current = now
-    const projectOrder = proposal.resources.map((g) => g.id).filter((id) => id !== NONE && id !== HOLIDAY_ROW)
-    const current = projects.filter((p) => !p.archived).map((p) => p.id)
-    if (projectOrder.join() !== current.join()) onReorderProjects?.(projectOrder)
+    // Order always follows dates, so a drag only matters when it moves an event to another project.
     const changes: { id: string; sort: number; projectId: string | null }[] = []
     for (const g of proposal.resources) {
       if (g.id === HOLIDAY_ROW) continue
-      ;(g.children ?? []).forEach((child, i) => {
+      ;(g.children ?? []).forEach((child) => {
         const id = child.id.replace(/^ev:/, "")
         const e = byId.get(id)
         const projectId = g.id === NONE ? null : g.id
-        if (e && (e.sort !== i || (e.projectId ?? null) !== projectId)) changes.push({ id, sort: i, projectId })
+        if (e && (e.projectId ?? null) !== projectId) changes.push({ id, sort: e.sort, projectId })
       })
     }
     if (changes.length) onReorderEvents?.(changes)
@@ -169,8 +173,8 @@ export default function GanttBoard({
       onResourceReorder={readOnly ? undefined : onReorder}
       canReorderResource={(p) => {
         if (p.resourceId === HOLIDAY_ROW || p.parentId === HOLIDAY_ROW) return false
-        const isEventRow = p.resourceId.startsWith("ev:")
-        return isEventRow ? p.parentId !== null : p.parentId === null
+        // Project groups are ordered by date; only event rows can be dragged (into another project).
+        return p.resourceId.startsWith("ev:") && p.parentId !== null
       }}
       canCreateTask={() => !readOnly}
       onCreateTask={() => {
@@ -210,3 +214,12 @@ export default function GanttBoard({
   )
 }
 
+
+/** Calendar order: start, then end, then title. */
+function byDate(a: Ev, b: Ev) {
+  return (
+    evStart(a).getTime() - evStart(b).getTime() ||
+    evEnd(a).getTime() - evEnd(b).getTime() ||
+    a.title.localeCompare(b.title)
+  )
+}

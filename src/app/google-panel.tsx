@@ -18,6 +18,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import { api } from "@/lib/api"
 import { useEventMutations, useShareMutations } from "@/lib/data"
 import { dayKey, safeDate } from "@/lib/dates"
@@ -500,7 +501,7 @@ function SheetsCard({
           <div className="grid gap-2">
             <SubHead>Export</SubHead>
             <label className="flex items-center gap-2 text-[13px]">
-              <input type="checkbox" checked={withData} onChange={(e) => setWithData(e.target.checked)} className="size-4 accent-[var(--primary)]" />
+              <Checkbox checked={withData} onCheckedChange={(v) => setWithData(Boolean(v))} />
               Include daily data as a second tab
             </label>
             <Button variant="outline" className="justify-self-start" onClick={doExport} disabled={busy !== null}>
